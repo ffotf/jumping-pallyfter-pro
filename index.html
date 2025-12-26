@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>FFOTF Jumping Pallyfter PRO</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ffcc00">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FFOTF PRO">
+
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  background: black;
+  font-family: "Courier New", monospace;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+
+canvas {
+  width: 100vw;
+  height: 100vh;
+  image-rendering: pixelated;
+  display: block;
+}
+
+/* UI */
+#ui {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding: 8px;
+  font-size: 14px;
+  color: #00ff99;
+  background: rgba(0,0,0,0.6);
+  z-index: 5;
+}
+
+/* START OVERLAY */
+#startOverlay {
+  position: fixed;
+  inset: 0;
+  background: black url("startbild.png") center/cover no-repeat;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  animation: zoomIn 12s linear infinite alternate;
+}
+
+@keyframes zoomIn {
+  from { transform: scale(1); }
+  to { transform: scale(1.02); }
+}
+
+/* CRT scanlines */
+#startOverlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0,0,0,0.15),
+    rgba(0,0,0,0.15) 1px,
+    rgba(255,255,255,0.02) 2px
+  );
+  pointer-events: none;
+}
+
+#startContent {
+  text-align: center;
+  color: #ffcc00;
+  z-index: 2;
+}
+
+#pressStart {
+  font-size: 22px;
+  margin-top: 20px;
+  animation: pulse 1.2s infinite alternate;
+}
+
+@keyframes pulse {
+  from { color: #ffcc00; }
+  to { color: orange; }
+}
+
+/* Buttons */
+#jumpBtn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 120px;
+  height: 120px;
+  font-size: 22px;
+  background: #ff0;
+  border: 4px solid black;
+  z-index: 10;
+}
+
+#muteBtn {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  width: 60px;
+  height: 60px;
+  font-size: 24px;
+  background: #222;
+  color: white;
+  border: 3px solid #555;
+  z-index: 10;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="game" width="360" height="640"></canvas>
+
+<div id="ui">
+⏱ <span id="time">0.0</span>s |
+📈 <span id="skill">0</span>% |
+🏷 <span id="title">Golvsopare</span>
+</div>
+
+<div id="startOverlay">
+  <div id="startContent">
+    <h1>FFOTF</h1>
+    <div id="pressStart">TRYCK FÖR ATT STARTA</div>
+  </div>
+</div>
+
+<button id="jumpBtn">HOPPA</button>
+<button id="muteBtn">🔊</button>
+
+<script>
+/* =======================
+   GLOBAL STATE
+======================= */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let running = false;
+let lastTime = 0;
+let timeAlive = 0;
+let speed = 90;
+let gravity = 700;
+let groundY = 520;
+let muted = localStorage.getItem("ffotf_muted") === "1";
+
+document.getElementById("muteBtn").textContent = muted ? "🔇" : "🔊";
+
+/* =======================
+   AUDIO (iOS SAFE)
+======================= */
+function speak(text, pitch=1.1) {
+  if (muted) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "sv-SE";
+  u.pitch = pitch;
+  u.rate = 0.85;
+  speechSynthesis.speak(u);
+}
+
+/* =======================
+   START
+======================= */
+function startGame() {
+  if (running) return;
+  running = true;
+  document.getElementById("startOverlay").style.display = "none";
+  speechSynthesis.cancel();
+  speak("F F O T F… PRO… PRO… PRO…", 0.9);
+  requestAnimationFrame(loop);
+}
+
+document.getElementById("startOverlay").addEventListener("click", startGame);
+document.getElementById("startOverlay").addEventListener("touchstart", startGame);
+
+/* =======================
+   PLAYER
+======================= */
+const player = {
+  x: 60,
+  y: groundY,
+  vy: 0,
+  w: 40,
+  h: 28,
+  jumping: false
+};
+
+function jump() {
+  if (!running || player.jumping) return;
+  player.vy = -360;
+  player.jumping = true;
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+
+document.getElementById("jumpBtn").addEventListener("touchstart", jump);
+document.getElementById("jumpBtn").addEventListener("click", jump);
+
+/* =======================
+   OBSTACLES
+======================= */
+let obstacles = [];
+const obstacleTypes = ["pall","kaffe","pärm","skrivare","banan"];
+
+function spawnObstacle() {
+  obstacles.push({
+    x: canvas.width + 30,
+    w: 30,
+    h: 30,
+    type: obstacleTypes[Math.floor(Math.random()*obstacleTypes.length)]
+  });
+}
+
+/* =======================
+   SKILL & TITLES
+======================= */
+const titles = [
+  { p:0, t:"Golvsopare" },
+  { p:10, t:"Praktikant" },
+  { p:20, t:"Lagerrookie" },
+  { p:40, t:"Pallkrigare" },
+  { p:60, t:"Logistiklegend" },
+  { p:80, t:"FFOTF PRO" }
+];
+
+let lastTitle = "Golvsopare";
+
+/* =======================
+   ONE-LINERS
+======================= */
+const lines = [
+  "Chefen tittar!", "Kattsingen också!", "Truck-rage!", "Men åhhh!",
+  "Aj! Det där var dyrt!", "Snygg pallhoppning!", "Attans!",
+  "Super-najs!", "Woohooo!", "Opps, det vart ett C3",
+  "Den här lyftaren har ett proffs mekat med!",
+  "Full rulle!", "Här var det lager på lager",
+  "Plattan i mattan!", "Lite tidigt kanske vänta ett tag",
+  "Ur vägen för fan!", "Flytt pårä!"
+];
+
+let nextLineTime = 20;
+
+/* =======================
+   LOOP
+======================= */
+function loop(ts) {
+  const dt = (ts - lastTime) / 1000;
+  lastTime = ts;
+  timeAlive += dt;
+  speed += dt * 3;
+
+  // Player physics
+  player.vy += gravity * dt;
+  player.y += player.vy * dt;
+  if (player.y >= groundY) {
+    player.y = groundY;
+    player.vy = 0;
+    player.jumping = false;
+  }
+
+  // Obstacles
+  if (Math.random() < 0.025) spawnObstacle();
+  obstacles.forEach(o => o.x -= speed * dt);
+  obstacles = obstacles.filter(o => o.x + o.w > 0);
+
+  // Collision
+  for (let o of obstacles) {
+    if (player.x < o.x + o.w &&
+        player.x + player.w > o.x &&
+        player.y + player.h > groundY - o.h) {
+      if (navigator.vibrate) navigator.vibrate([40,20,40]);
+      speak("Aj! Det där var dyrt…", 0.8);
+      running = false;
+      return;
+    }
+  }
+
+  // Voice lines
+  if (timeAlive > nextLineTime) {
+    speak(lines[Math.floor(Math.random()*lines.length)],1.2);
+    nextLineTime += 45 + Math.random()*30;
+  }
+
+  // Skill
+  let skill = Math.min(99, Math.floor(100*(1-Math.exp(-timeAlive/60))));
+  document.getElementById("skill").textContent = skill;
+
+  let currentTitle = titles.slice().reverse().find(x => skill >= x.p).t;
+  if (currentTitle !== lastTitle && skill >= 10) {
+    speak(currentTitle, 1.0);
+    lastTitle = currentTitle;
+  }
+  document.getElementById("title").textContent = currentTitle;
+
+  // Draw
+  ctx.fillStyle = "#222";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Player
+  ctx.fillStyle = "#ff0";
+  ctx.fillRect(player.x, player.y+18, 50, 10);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(player.x+38, player.y+26, 6, 6);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(player.x+18, player.y-10, 14, 28);
+  ctx.fillStyle = "#f5c29a";
+  ctx.fillRect(player.x+14, player.y-28, 22, 18);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(player.x+16, player.y-20, 18, 4);
+
+  // Obstacles
+  ctx.fillStyle = "#8B4513";
+  obstacles.forEach(o=>{
+    ctx.fillRect(o.x, groundY-o.h, o.w, o.h);
+  });
+
+  document.getElementById("time").textContent = timeAlive.toFixed(1);
+  requestAnimationFrame(loop);
+}
+
+/* =======================
+   MUTE
+======================= */
+document.getElementById("muteBtn").onclick = ()=>{
+  muted = !muted;
+  localStorage.setItem("ffotf_muted", muted ? "1":"0");
+  document.getElementById("muteBtn").textContent = muted ? "🔇":"🔊";
+};
+
+/* =======================
+   PAUSE ON BLUR
+======================= */
+document.addEventListener("visibilitychange", ()=>{
+  if (document.hidden) running = false;
+});
+</script>
+
+</body>
+</html>
